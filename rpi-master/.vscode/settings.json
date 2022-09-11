@@ -1,8 +1,0 @@
-{
-    "files.associations": {
-        "time.h": "c",
-        "math.h": "c",
-        "rpi_dma_utils.h": "c",
-        "ctype.h": "c"
-    }
-}
