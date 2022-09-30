@@ -40,6 +40,16 @@
 #include <ctype.h>
 #include "rpi_dma_utils.h"
 #include "rpi_smi_defs.h"
+#include <sys/time.h>
+#include <math.h>
+
+long long millis() {
+    struct timeval te; 
+    gettimeofday(&te, NULL); // get current time
+    long long milliseconds = te.tv_sec*1000 + te.tv_usec/1000; // calculate milliseconds
+    // printf("milliseconds: %lld\n", milliseconds);
+    return milliseconds;
+}
 
 #if PHYS_REG_BASE==PI_4_REG_BASE        // Timings for RPi v4 (1.5 GHz)
 #define SMI_TIMING       10, 15, 30, 15    // 400 ns cycle time
@@ -47,17 +57,143 @@
 #define SMI_TIMING       10, 10, 20, 10   // 400 ns cycle time
 #endif
 
+// Params for width and height
+#define kMatrixWidth 32
+#define kMatrixHeight 32
+#define segments 8
+
+// Param for different pixel layouts
+const uint8_t    kMatrixSerpentineLayout = 1;
+const uint8_t    kMatrixTopToBottom = 0;
+
+uint16_t XY( uint8_t x, uint8_t y);
+uint16_t XYsafe( uint8_t x, uint8_t y);
+
+#define NUM_LEDS (kMatrixWidth * kMatrixHeight)
+
+typedef struct {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+} CRGB;
+
+CRGB rgb(uint8_t r, uint8_t g, uint8_t b)
+{
+    CRGB ret;
+    ret.r = r;
+    ret.g = g;
+    ret.b = b;
+    return ret;
+}
+
+typedef struct
+{
+    uint8_t h;
+    uint8_t s;
+    uint8_t v;
+} CHSV;
+
+CRGB hsv(uint8_t h, uint8_t s, uint8_t v)
+{
+    CRGB rgb;
+    uint8_t region, remainder, p, q, t;
+
+    if (s == 0)
+    {
+        rgb.r = v;
+        rgb.g = v;
+        rgb.b = v;
+        return rgb;
+    }
+
+    region = h / 43;
+    remainder = (h - (region * 43)) * 6; 
+
+    p = (v * (255 - s)) >> 8;
+    q = (v * (255 - ((s * remainder) >> 8))) >> 8;
+    t = (v * (255 - ((s * (255 - remainder)) >> 8))) >> 8;
+
+    switch (region)
+    {
+        case 0:
+            rgb.r = v; rgb.g = t; rgb.b = p;
+            break;
+        case 1:
+            rgb.r = q; rgb.g = v; rgb.b = p;
+            break;
+        case 2:
+            rgb.r = p; rgb.g = v; rgb.b = t;
+            break;
+        case 3:
+            rgb.r = p; rgb.g = q; rgb.b = v;
+            break;
+        case 4:
+            rgb.r = t; rgb.g = p; rgb.b = v;
+            break;
+        default:
+            rgb.r = v; rgb.g = p; rgb.b = q;
+            break;
+    }
+
+    return rgb;
+}
+
+CHSV rgb2hsv(CRGB rgb)
+{
+    CHSV hsv;
+    uint8_t rgbMin, rgbMax;
+
+    rgbMin = rgb.r < rgb.g ? (rgb.r < rgb.b ? rgb.r : rgb.b) : (rgb.g < rgb.b ? rgb.g : rgb.b);
+    rgbMax = rgb.r > rgb.g ? (rgb.r > rgb.b ? rgb.r : rgb.b) : (rgb.g > rgb.b ? rgb.g : rgb.b);
+
+    hsv.v = rgbMax;
+    if (hsv.v == 0)
+    {
+        hsv.h = 0;
+        hsv.s = 0;
+        return hsv;
+    }
+
+    hsv.s = 255 * (long)((rgbMax - rgbMin) / hsv.v);
+    if (hsv.s == 0)
+    {
+        hsv.h = 0;
+        return hsv;
+    }
+
+    if (rgbMax == rgb.r)
+        hsv.h = 0 + 43 * (rgb.g - rgb.b) / (rgbMax - rgbMin);
+    else if (rgbMax == rgb.g)
+        hsv.h = 85 + 43 * (rgb.b - rgb.r) / (rgbMax - rgbMin);
+    else
+        hsv.h = 171 + 43 * (rgb.r - rgb.g) / (rgbMax - rgbMin);
+
+    return hsv;
+}
+
+CRGB leds_plus_safety_pixel[ NUM_LEDS + 1];
+CRGB* const leds = &leds_plus_safety_pixel[1];
+uint8_t hue;
+float mixture;
+float timeFactor, driftFactor, h2x, h2y, h3x, h3y;
+float soid1( float x, float y);
+float soid2(float x, float y);
+float soid3(float x, float y);
+void setLED(uint8_t x,uint8_t y, CRGB col);
+void genDisplay();
+void Refresh();
+
 #define TX_TEST         0   // If non-zero, use dummy Tx data
-#define LED_D0_PIN      8   // GPIO pin for D0 output
+#define LED_D0_PIN      8  // GPIO pin for D0 output
 #define LED_NCHANS      8   // Number of LED channels (8 or 16)
 #define LED_NBITS       24  // Number of data bits per LED
 #define LED_PREBITS     4   // Number of zero bits before LED data
 #define LED_POSTBITS    4   // Number of zero bits after LED data
 #define BIT_NPULSES     3   // Number of O/P pulses per LED bit
-#define CHAN_MAXLEDS    128 // Maximum number of LEDs per channel
-#define CHASE_MSEC      100 // Delay time for chaser light test
+#define CHAN_MAXLEDS    (NUM_LEDS / segments)  // Maximum number of LEDs per channel
+#define CHASE_MSEC      30 // Delay time for chaser light test
 #define REQUEST_THRESH  2   // DMA request threshold
-#define DMA_CHAN        10  // DMA channel to use
+#define DMA_CHAN        5  // DMA channel to use
 
 // Length of data for 1 row (1 LED on each channel)
 #define LED_DLEN        (LED_NBITS * BIT_NPULSES)
@@ -94,10 +230,10 @@ volatile SMI_DCD_REG *smi_dcd;
 #define VC_MEM_SIZE         (PAGE_SIZE + TX_BUFF_SIZE(CHAN_MAXLEDS))
 
 // RGB values for test mode (1 value for each of 16 channels)
-int on_rgbs[16] = {0xff0000, 0x00ff00, 0x0000ff, 0xff0000,
-                  0x00ff00, 0x0000ff, 0xff0000, 0x00ff00,
-                  0x0000ff, 0xff0000, 0x00ff00, 0x0000ff,
-                  0xff0000, 0x00ff00, 0x0000ff, 0xff0000};
+int on_rgbs[16] = {0xff0000, 0x00ff00, 0x0000ff, 0xffff00,
+                  0xff00ff, 0x00ffff, 0xffffff, 0x400000,
+                  0x004000, 0x000040, 0x4040ff, 0x400040,
+                  0x004040, 0x404040, 0xff4040, 0x40ff40};
 int off_rgbs[16];
 
 #if TX_TEST
@@ -111,6 +247,7 @@ int testmode, chan_ledcount=1;          // Command-line parameters
 int rgb_data[CHAN_MAXLEDS][LED_NCHANS]; // RGB data
 int chan_num;                           // Current channel for data I/P
 
+void mat_txdata(CRGB *leds, TXDATA_T *txd);
 void rgb_txdata(int *rgbs, TXDATA_T *txd);
 int str_rgb(char *s, int rgbs[][LED_NCHANS], int chan);
 void swap_bytes(void *data, int len);
@@ -124,7 +261,7 @@ void start_smi(MEM_MAP *mp);
 
 int main(int argc, char *argv[])
 {
-    int args=0, n, oset=0;
+    int args=0, n;
 
     while (argc > ++args)               // Process command-line args
     {
@@ -173,30 +310,20 @@ int main(int argc, char *argv[])
     while (dma_active(DMA_CHAN))
         usleep(10);
 #else
-    setup_smi_dma(&vc_mem, TX_BUFF_LEN(chan_ledcount));
+    setup_smi_dma(&vc_mem, TX_BUFF_LEN(CHAN_MAXLEDS));
     printf("%s %u LED%s per channel, %u channels\n", testmode ? "Testing" : "Setting",
-           chan_ledcount, chan_ledcount==1 ? "" : "s", LED_NCHANS);
+           CHAN_MAXLEDS, CHAN_MAXLEDS==1 ? "" : "s", segments);
     if (testmode)
     {
         while (1)
         {
-            if (chan_ledcount < 2)
-                rgb_txdata(oset&1 ? off_rgbs : on_rgbs, tx_buffer);
-            else
-            {
-                for (n=0; n<chan_ledcount; n++)
-                {
-                    rgb_txdata(n==oset%chan_ledcount ? on_rgbs : off_rgbs,
-                               &tx_buffer[LED_TX_OSET(n)]);
-                }
-            }
-            oset++;
-#if LED_NCHANS <= 8
-            swap_bytes(tx_buffer, TX_BUFF_SIZE(chan_ledcount));
-#endif
-            memcpy(txdata, tx_buffer, TX_BUFF_SIZE(chan_ledcount));
-            start_smi(&vc_mem);
-            usleep(CHASE_MSEC * 1000);
+            float ms = millis();
+            timeFactor = ms/2500.0;
+            driftFactor = sinf(timeFactor)/150.0;
+            mixture = (sinf((timeFactor+(20.0*driftFactor)))+1.0)*0.5;
+            hue = truncf(timeFactor*(7.0 + 2*driftFactor));
+            genDisplay();
+            Refresh();                  
         }
     }
     else
@@ -232,6 +359,54 @@ int str_rgb(char *s, int rgbs[][LED_NCHANS], int chan)
     }
     return(i);
 }
+
+// Set Tx data for 8 or 16 chans, 1 LED per chan, given 1 RGB val per chan
+// Logic 1 is 0.8us high, 0.4 us low, logic 0 is 0.4us high, 0.8us low
+void mat_txdata(CRGB *leds, TXDATA_T *txd)
+{
+    int i, n, l;
+    uint8_t by, bi,msk;
+    CRGB c;
+
+    for (l=0; l<CHAN_MAXLEDS; l++)
+    {    
+        // For each bit of the 24-bit RGB values..
+        for (n=0; n<LED_NBITS; n++)
+        {
+            // Mask to convert RGB to GRB, M.S bit first
+            msk = n==0 ? 0x80 : n==8 ? 0x80 : n==16 ? 0x80 : msk>>1;
+            // 1st byte or word is a high pulse on all lines
+            txd[0] = (TXDATA_T)0xffff;
+            // 2nd has high or low bits from data
+            // 3rd is a low pulse
+            txd[1] = txd[2] = 0;
+            for (i=0; i<segments; i++)
+            {
+                c = leds[i*CHAN_MAXLEDS + l];
+                bi = n/8;
+                if (bi == 0)
+                {
+                    by = c.g;
+                }
+                else
+                {
+                    if (bi == 1)
+                    {
+                        by = c.r;
+                    }
+                    else
+                    {
+                        by = c.b;
+                    }
+                }
+                if (by & msk)
+                    txd[1] |= (1 << i);
+            }
+            txd += BIT_NPULSES;
+        }
+    }
+}
+
 // Set Tx data for 8 or 16 chans, 1 LED per chan, given 1 RGB val per chan
 // Logic 1 is 0.8us high, 0.4 us low, logic 0 is 0.4us high, 0.8us low
 void rgb_txdata(int *rgbs, TXDATA_T *txd)
@@ -248,7 +423,7 @@ void rgb_txdata(int *rgbs, TXDATA_T *txd)
         // 2nd has high or low bits from data
         // 3rd is a low pulse
         txd[1] = txd[2] = 0;
-        for (i=0; i<LED_NCHANS; i++)
+        for (i=0; i<segments; i++)
         {
             if (rgbs[i] & msk)
                 txd[1] |= (1 << i);
@@ -384,6 +559,175 @@ void start_smi(MEM_MAP *mp)
 
     start_dma(mp, DMA_CHAN, &cbs[0], 0);
     smi_cs->start = 1;
+}
+
+uint16_t XY( uint8_t x, uint8_t y)
+{
+  uint16_t i;
+  uint8_t h=y;
+
+  if( kMatrixTopToBottom == 0) {
+    h = kMatrixHeight - 1 - y;
+  }
+  
+  if( kMatrixSerpentineLayout == 0) {
+    i = (h * kMatrixWidth) + x;
+  }
+
+  if( kMatrixSerpentineLayout == 1) {
+    if( y & 0x01) {
+      // Even rows run backwards
+      i = (h * kMatrixWidth) + x;
+    } else {
+      // Odd rows run forwards
+      uint8_t reverseX = (kMatrixWidth - 1) - x;
+      i = (h * kMatrixWidth) + reverseX;
+    }
+  }
+  
+  return i;
+}
+
+uint16_t XYsafe( uint8_t x, uint8_t y)
+{
+  if( x >= kMatrixWidth) return -1;
+  if( y >= kMatrixHeight) return -1;
+  return XY(x,y);
+}
+
+float soid1( float x, float y)
+{
+  return cosf(x * (10.0 + driftFactor * 2.5) + timeFactor + 10.0*driftFactor);
+}
+
+float soid2(float x, float y)
+{
+  return sinf((10.0 - driftFactor * 5.0) * (x*h2x + y*h2y) + timeFactor);
+}
+
+float soid3(float x, float y)
+{
+  float cx = x + h3x;
+  float cy = y + h3y;  
+
+  return sinf((sqrt((100.0 + driftFactor * 50.0)*(cx*cx+cy*cy)+1) + timeFactor));
+}
+
+
+CRGB color(float v)
+{
+  uint8_t h = truncf(v*127.5+127.5);
+  return hsv(h-hue,255,127);
+}
+
+
+CRGB flame(float v)
+{
+  uint8_t temp = truncf(255.0*fabsf(v));
+  if (temp < 86) {
+    return hsv(hue, 255, temp*192/86);
+  }
+  if (temp < 172) {
+    return hsv(hue, 255 - (temp-86)*128/86, 192+(temp-86)*64/86);
+  }
+  return hsv(hue, 128-(temp-172)*128/86, 255);
+  
+}
+
+/*
+CRGB rainbow(float v)
+{
+    float val = (v+1.0)*4.0;
+    uint8_t seg = (int)val%7;
+    uint8_t sub = (val - seg)*128;
+    if (seg < 2) return rgb(255-seg*127-(sub>>1),255-seg*127-(sub>>1),255-seg*127-(sub>>1));
+    if (seg < 3) return rgb(0,0,sub);
+    if (seg < 4) return rgb(0,sub, 255-sub);
+    if (seg < 5) return rgb(sub, 255-sub, sub);
+    if (seg < 6) return rgb(255,0,255-sub);
+    if (seg < 7) return rgb(255, sub, 0);
+    return rgb(255,255,sub);
+
+}
+
+CRGB sinbow(int16_t v)
+{
+    uint16_t val = (v + 32767);
+    uint8_t seg = (val>>13)&7;
+    uint8_t sub = val>>5&255;
+    if (seg < 1) return CRGB(0,0,sin8(sub/2));
+    if (seg < 2) return CRGB(0,sin8(sub/2),255);
+    if (seg < 3) return CRGB(0,255,sin8(128+sub/2));
+    if (seg < 4) return CRGB(sin8(sub/2),255,0);
+    if (seg < 5) return CRGB(255, sin8(128+sub/2),0);
+    if (seg < 6) return CRGB(255,0,sin8(sub/2));
+    if (seg < 7) return CRGB(255, sin8(sub/2), 255);
+    return CRGB(sin8(128+sub/2),sin8(128+sub/2),sin8(128+sub/2));
+}
+
+CRGB gamma(CRGB b)
+{
+  return CRGB(gamma8[b.r],gamma8[b.g], gamma8[b.b]);
+}
+*/
+
+CRGB mix(float v)
+{
+  CRGB m;
+  CRGB f = color(v);
+  CRGB c = flame(v);
+  m.r = truncf((mixture * c.r + (1.0-mixture) * f.r)*.25);
+  m.g = truncf((mixture * c.g + (1.0-mixture) * f.g)*.25);
+  m.b = truncf((mixture * c.b + (1.0-mixture) * f.b)*.25);
+  return m; //rgb(c.r/4, c.g/4, c.b/4);
+}
+
+void Refresh()
+{
+    mat_txdata(leds, &tx_buffer[LED_TX_OSET(0)]);
+#if LED_NCHANS <= 8
+    swap_bytes(tx_buffer, TX_BUFF_SIZE(CHAN_MAXLEDS));
+#endif
+    while (dma_active(DMA_CHAN))
+        usleep(10);
+    memcpy(txdata, tx_buffer, TX_BUFF_SIZE(CHAN_MAXLEDS));
+    start_smi(&vc_mem);
+    usleep(CHASE_MSEC * 1000);
+}
+
+const uint8_t gAdjust = 230;
+
+void setLED(uint8_t x,uint8_t y, CRGB col)
+{
+    uint8_t r = col.r; // 255 / gAdjust;
+    uint8_t g = col.g;
+    uint8_t b = col.b;
+
+    /*if (y < 15)
+    {
+      g = g * 255/gAdjust;
+    }*/
+
+    uint16_t l = XYsafe(x,y);
+    leds[l].r = r;
+    leds[l].g = g;
+    leds[l].b = b;
+}
+
+void genDisplay()
+{
+  h2x = sinf(timeFactor/(2.0 + 0.4*driftFactor));
+  h2y = cosf(timeFactor/(3.0 - 0.6*driftFactor));
+  h3x = .5*sinf(timeFactor/(5.0 + .5*driftFactor));
+  h3y = .5*cosf(timeFactor/(3.0 - 0.3*driftFactor));
+  for (uint8_t x=0; x<kMatrixWidth;x++)
+    for (uint8_t y=0; y<kMatrixHeight; y++)
+    {
+      float xf = (float)x/(float)kMatrixWidth - .5;
+      float yf = (float)y/(float)kMatrixHeight - .5;
+//      setLED(x,y,mix((soid3(xf,yf)+soid2(xf,yf)+soid1(xf,yf))/3.0));
+      setLED(x,y,mix(soid2(xf,yf)));
+    }
 }
 
 // EOF
