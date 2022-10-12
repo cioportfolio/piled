@@ -9,7 +9,7 @@ colcount = 15
 channels = 1
 leds = rowcount * colcount
 
-proc = subprocess.Popen(["ledapi", "-n", "128", "-t"],
+proc = subprocess.Popen("./ledapi",
 stdin=subprocess.PIPE,
 stdout=subprocess.PIPE)
 
