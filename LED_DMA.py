@@ -30,8 +30,8 @@ for it in range(0,1):
 		largearray[0,:] = np.array([colcount-col, 0,col])
 
 		# loadleds(largearray, leds, channels)         # call c program
-		message, errs = proc.communicate(largearray, 2)
-		print("Return message:" + message + " Errors:" + errs)
+		print("Write: " + proc.stdin.write(largearray))
+		print("Return message:" + proc.stdout.read(3))
 		time.sleep(2)
 proc.terminate()
 print(proc.wait())
