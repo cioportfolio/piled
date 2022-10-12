@@ -56,12 +56,12 @@
 #endif
 
 #define LED_D0_PIN      8   // GPIO pin for D0 output
-#define LED_NCHANS      16   // Number of LED channels (8 or 16)
+#define LED_NCHANS      8   // Number of LED channels (8 or 16)
 #define LED_NBITS       24  // Number of data bits per LED (3 colors with 8 bits each)
 #define LED_PREBITS     4   // Number of zero bits before LED data (default 4)
 #define LED_POSTBITS    4   // Number of zero bits after LED data
 #define BIT_NPULSES     3   // Number of O/P pulses per LED bit
-#define CHAN_MAXLEDS    15  // Maximum number of LEDs per channel
+#define CHAN_MAXLEDS    128 // Maximum number of LEDs per channel
 #define REQUEST_THRESH  2   // DMA request threshold
 #define DMA_CHAN        5  // DMA channel to use (may want to change to  5, to get more than 65533 byte transfers)
 
@@ -119,16 +119,17 @@ int LED_DMA(uint8_t* array, int n_LEDs, int n_CHANs)
     signal(SIGINT, terminate);                  //<----- what is this for?
 
     map_devices();
-    init_smi(SMI_16_BITS, SMI_TIMING);
+    init_smi(LED_NCHANS>8 ? SMI_16_BITS : SMI_8_BITS, SMI_TIMING);
     map_uncached_mem(&vc_mem, VC_MEM_SIZE);
-    setup_smi_dma(&vc_mem, TX_BUFF_LEN(n_LEDs));
+    setup_smi_dma(&vc_mem, TX_BUFF_LEN(CHAN_MAXLEDS));
     mat_txdata(array, n_LEDs, n_CHANs, &tx_buffer[LED_TX_OSET(0)]);
 #if LED_NCHANS <= 8
     swap_bytes(tx_buffer, TX_BUFF_SIZE(CHAN_MAXLEDS));
 #endif
     memcpy(txdata, tx_buffer, TX_BUFF_SIZE(CHAN_MAXLEDS));
-//    enable_dma(DMA_CHAN);
+    enable_dma(DMA_CHAN);
     start_smi(&vc_mem);
+    usleep(10);
     while (dma_active(DMA_CHAN))
     	usleep(10);
     terminate(0);
@@ -215,13 +216,13 @@ void init_smi(int width, int ns, int setup, int strobe, int hold)
         *REG32(clk_regs, CLK_SMI_CTL) = CLK_PASSWD | (1 << 5);
         usleep(10);
         while (*REG32(clk_regs, CLK_SMI_CTL) & (1 << 7)) ;
-        usleep(10);
+            usleep(10);
         *REG32(clk_regs, CLK_SMI_DIV) = CLK_PASSWD | (divi << 12);
         usleep(10);
         *REG32(clk_regs, CLK_SMI_CTL) = CLK_PASSWD | 6 | (1 << 4);
         usleep(10);
         while ((*REG32(clk_regs, CLK_SMI_CTL) & (1 << 7)) == 0) ;
-        usleep(100);
+            usleep(100);
     }
     if (smi_cs->seterr)
         smi_cs->seterr = 1;
@@ -231,8 +232,8 @@ void init_smi(int width, int ns, int setup, int strobe, int hold)
     smi_dmc->panicr    = smi_dmc->panicw = 8;
     smi_dmc->reqr      = smi_dmc->reqw = REQUEST_THRESH;
     smi_dsr->rwidth    = smi_dsw->wwidth = width;
-
-    for (i=0; i<LED_NCHANS; i++) gpio_mode(LED_D0_PIN+i, GPIO_ALT1);
+    for (i=0; i<LED_NCHANS; i++)
+        gpio_mode(LED_D0_PIN+i, GPIO_ALT1);
 }
 //----------------------------------------------------------------------------
 // Set up SMI transfers using DMA

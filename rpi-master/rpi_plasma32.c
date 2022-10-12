@@ -691,6 +691,7 @@ void Refresh()
     while (dma_active(DMA_CHAN))
         usleep(10);
     memcpy(txdata, tx_buffer, TX_BUFF_SIZE(CHAN_MAXLEDS));
+    enable_dma(DMA_CHAN);
     start_smi(&vc_mem);
     usleep(CHASE_MSEC * 1000);
 }

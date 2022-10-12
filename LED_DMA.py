@@ -22,8 +22,12 @@ for it in range(0,10):
 		largearray = np.zeros((rowcount, colcount, 3), dtype=np.uint8)  # three 8 bit color
 
 
-		largearray[0,col] = np.array([0, 32,32])
+		largearray[0,:] = np.array([colcount-col, 0,col])
 
 		loadleds(largearray, leds, channels)         # call c program
-		time.sleep(.25)
+		print(col)
+		time.sleep(.1)
+largearray = np.zeros((rowcount, colcount, 3), dtype=np.uint8)  # three 8 bit color
+loadleds(largearray, leds, channels)         # call c program
+
 print("======================== DONE =========================")
