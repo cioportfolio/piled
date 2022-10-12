@@ -110,7 +110,8 @@ void start_smi(MEM_MAP *mp);
 
 int main(int argc, char *argv[])
 {
-    char msg[5] = "OK ";
+//    char msg[5] = "OK\n ";
+//    int bytesread;
 /*    int args=0, n;
  
     while (argc > ++args)               // Process command-line args
@@ -151,7 +152,8 @@ int main(int argc, char *argv[])
     setup_smi_dma(&vc_mem, TX_BUFF_LEN(CHAN_MAXLEDS));
     while (1)
     {
-        fread(&rgb_data, 1, LED_NCHANS * CHAN_MAXLEDS * 3, stdin);
+        while (fread(&rgb_data, 1, LED_NCHANS * CHAN_MAXLEDS * 3, stdin) == 0)
+		usleep(10);
         mat_txdata(rgb_data, &tx_buffer[LED_TX_OSET(0)]);
     #if LED_NCHANS <= 8
         swap_bytes(tx_buffer, TX_BUFF_SIZE(CHAN_MAXLEDS));
@@ -162,7 +164,9 @@ int main(int argc, char *argv[])
         usleep(10);
         while (dma_active(DMA_CHAN))
             usleep(10);
-        fwrite(&msg, 1, 3, stdout);
+	printf("OK\n");
+//        fwrite(&msg, 1, 3, stdout);
+//	printf("%i\n", bytesread);
         fflush(stdout);
     }
     terminate(0);
@@ -261,7 +265,7 @@ void terminate(int sig)
 {
     int i;
 
-    printf("Closing\n");
+//    printf("Closing\n");
     if (gpio_regs.virt)
     {
         for (i=0; i<LED_NCHANS; i++)
