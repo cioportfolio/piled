@@ -163,6 +163,7 @@ int main(int argc, char *argv[])
         while (dma_active(DMA_CHAN))
             usleep(10);
         fwrite(&msg, 1, 3, stdout);
+        fflush(stdout);
     }
     terminate(0);
     return(0);
