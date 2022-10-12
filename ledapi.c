@@ -97,7 +97,7 @@ volatile SMI_DCD_REG *smi_dcd;
 
 TXDATA_T *txdata;                       // Pointer to uncached Tx data buffer
 TXDATA_T tx_buffer[TX_BUFF_LEN(CHAN_MAXLEDS)];  // Tx buffer for assembling data
-uint8_t rgb_data[CHAN_MAXLEDS * LED_NCHANS][3]; // RGB data
+uint8_t rgb_data[CHAN_MAXLEDS * LED_NCHANS * 3]; // RGB data
 
 void mat_txdata(uint8_t *leds, TXDATA_T *txd);
 void swap_bytes(void *data, int len);
@@ -189,7 +189,7 @@ void mat_txdata(uint8_t *leds, TXDATA_T *txd)
             txd[1] = txd[2] = 0;
             for (i=0; i<LED_NCHANS; i++)
             {
-		if (i < n_CHANs)
+		if (i < LED_NCHANS)
 		{
 		        o = (i*CHAN_MAXLEDS + l)*3;
 		        cr = leds[o];
