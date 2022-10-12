@@ -15,3 +15,11 @@ gcc -shared -Wl,-soname,LED_DMA.so -o LED_DMA.so -fPIC LED_DMA.c rpi-master/rpi_
 
 sudo python3 ./LED_DMA.py
 ```
+
+Python pipe to if experiment
+
+```bash
+gcc -Wall -o ledapi ledapi.c rpi-master/rpi_dma_utils.c -lm
+
+sudo python3 ./LED_DMA.py
+```
