@@ -1,6 +1,3 @@
-rpi-master/plas32
-rpi-master/plas
 .vscode
-rpi-master/test
-LED_DMA.so
 ledapi
+*.pyc

@@ -14,6 +14,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+
+// 13th October 22 Modified by RB to remove printf when piping from Python code
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -58,7 +60,7 @@ void *map_uncached_mem(MEM_MAP *mp, int size)
         (mp->bus = lock_vc_mem(mp->fd, mp->h)) != 0 &&
         (mp->virt = map_segment(BUS_PHYS_ADDR(mp->bus), mp->size)) != 0
         ? mp->virt : 0;
-    printf("VC mem handle %u, phys %p, virt %p\n", mp->h, mp->bus, mp->virt);
+    // printf("VC mem handle %u, phys %p, virt %p\n", mp->h, mp->bus, mp->virt);
     return(ret);
 }
 

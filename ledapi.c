@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
             }
         }
     }
-    printf("Using %i channels of %i LEDs\n", used_chan, used_led);
+    // printf("Using %i channels of %i LEDs\n", used_chan, used_led);
     signal(SIGINT, terminate);
     map_devices();
     init_smi(LED_NCHANS > 8 ? SMI_16_BITS : SMI_8_BITS, SMI_TIMING);
@@ -174,7 +174,7 @@ int main(int argc, char *argv[])
         usleep(10);
         while (dma_active(DMA_CHAN))
             usleep(10);
-        printf("OK\n");
+        //printf("OK\n");
         fflush(stdout);
     }
     terminate(0);
