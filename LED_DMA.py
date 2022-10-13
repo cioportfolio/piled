@@ -14,13 +14,12 @@ proc = subprocess.Popen([
 		"-c", str(channels),
 		"-l", str(leds/channels)
 	],
-	stdin=subprocess.PIPE) #,
-#stdout=subprocess.PIPE)
+	stdin=subprocess.PIPE)
 
-#print(proc.stdout.readline(50).decode("utf-8"))
-
-# # c program expects:
-# #    8 bit uint array
+def display(rgb):
+	rgb[1::2] = rgb[1::2,::-1] # reverse every other row for "snake" layout matrix
+	print("Write: " + str(proc.stdin.write(rgb)))
+	proc.stdin.flush()
 
 for it in range(0,10):
 	for col in range(0,colcount):
@@ -29,9 +28,7 @@ for it in range(0,10):
 
 
 		rgb[:,col] = np.array([15-col, it,col])
-
-		print("Write: " + str(proc.stdin.write(rgb)))
-		proc.stdin.flush()
+		display(rgb)
 		time.sleep(.01)
 
 proc.terminate()
