@@ -31,6 +31,11 @@
 //                   Corrected DMA nsamp value (was byte count)
 // v0.12 JPB 26/5/21 Corrected transfer length for 16-bit mode
 
+// modified by LHK 05/12/21 simplified to accept buffer prepared by python code
+// may want to switch to DMA channel 4 or 5, because these are not lite and are twice as wide
+//
+// Further modified by RJB Sep 22 to drive 32x32 matrix from python program
+
 #include <stdio.h>
 #include <signal.h>
 #include <stdint.h>
@@ -43,32 +48,32 @@
 #include <sys/time.h>
 #include <math.h>
 
-#if PHYS_REG_BASE==PI_4_REG_BASE        // Timings for RPi v4 (1.5 GHz)
-#define SMI_TIMING       10, 15, 30, 15    // 400 ns cycle time
-#else                                   // Timings for RPi v0-3 (1 GHz)
-#define SMI_TIMING       10, 10, 20, 10   // 400 ns cycle time
+#if PHYS_REG_BASE == PI_4_REG_BASE // Timings for RPi v4 (1.5 GHz)
+#define SMI_TIMING 10, 15, 30, 15  // 400 ns cycle time
+#else                              // Timings for RPi v0-3 (1 GHz)
+#define SMI_TIMING 10, 10, 20, 10  // 400 ns cycle time
 #endif
 
-#define TX_TEST         0   // If non-zero, use dummy Tx data
-#define LED_D0_PIN      8  // GPIO pin for D0 output
-#define LED_NCHANS      8   // Number of LED channels (8 or 16)
-#define LED_NBITS       24  // Number of data bits per LED
-#define LED_PREBITS     4   // Number of zero bits before LED data
-#define LED_POSTBITS    4   // Number of zero bits after LED data
-#define BIT_NPULSES     3   // Number of O/P pulses per LED bit
-#define CHAN_MAXLEDS    15  // Maximum number of LEDs per channel
-#define CHASE_MSEC      30 // Delay time for chaser light test
-#define REQUEST_THRESH  2   // DMA request threshold
-#define DMA_CHAN        5  // DMA channel to use
+#define TX_TEST 0        // If non-zero, use dummy Tx data
+#define LED_D0_PIN 8     // GPIO pin for D0 output
+#define LED_NCHANS 8     // Number of LED channels (8 or 16)
+#define LED_NBITS 24     // Number of data bits per LED
+#define LED_PREBITS 4    // Number of zero bits before LED data
+#define LED_POSTBITS 4   // Number of zero bits after LED data
+#define BIT_NPULSES 3    // Number of O/P pulses per LED bit
+#define CHAN_MAXLEDS 256 // Maximum number of LEDs per channel
+#define CHASE_MSEC 30    // Delay time for chaser light test
+#define REQUEST_THRESH 2 // DMA request threshold
+#define DMA_CHAN 5       // DMA channel to use
 
 // Length of data for 1 row (1 LED on each channel)
-#define LED_DLEN        (LED_NBITS * BIT_NPULSES)
+#define LED_DLEN (LED_NBITS * BIT_NPULSES)
 
 // Transmit data type, 8 or 16 bits
 #if LED_NCHANS > 8
-#define TXDATA_T        uint16_t
+#define TXDATA_T uint16_t
 #else
-#define TXDATA_T        uint8_t
+#define TXDATA_T uint8_t
 #endif
 
 // Structures for mapped I/O devices, and non-volatile memory
@@ -76,10 +81,10 @@ extern MEM_MAP gpio_regs, clk_regs, dma_regs;
 MEM_MAP vc_mem, smi_regs;
 
 // Pointers to SMI registers
-volatile SMI_CS_REG  *smi_cs;
-volatile SMI_L_REG   *smi_l;
-volatile SMI_A_REG   *smi_a;
-volatile SMI_D_REG   *smi_d;
+volatile SMI_CS_REG *smi_cs;
+volatile SMI_L_REG *smi_l;
+volatile SMI_A_REG *smi_a;
+volatile SMI_D_REG *smi_d;
 volatile SMI_DMC_REG *smi_dmc;
 volatile SMI_DSR_REG *smi_dsr;
 volatile SMI_DSW_REG *smi_dsw;
@@ -88,16 +93,17 @@ volatile SMI_DCA_REG *smi_dca;
 volatile SMI_DCD_REG *smi_dcd;
 
 // Ofset into Tx data buffer, given LED number in chan
-#define LED_TX_OSET(n)      (LED_PREBITS + (LED_DLEN * (n)))
+#define LED_TX_OSET(n) (LED_PREBITS + (LED_DLEN * (n)))
 
 // Size of data buffers & NV memory, given number of LEDs per chan
-#define TX_BUFF_LEN(n)      (LED_TX_OSET(n) + LED_POSTBITS)
-#define TX_BUFF_SIZE(n)     (TX_BUFF_LEN(n) * sizeof(TXDATA_T))
-#define VC_MEM_SIZE         (PAGE_SIZE + TX_BUFF_SIZE(CHAN_MAXLEDS))
+#define TX_BUFF_LEN(n) (LED_TX_OSET(n) + LED_POSTBITS)
+#define TX_BUFF_SIZE(n) (TX_BUFF_LEN(n) * sizeof(TXDATA_T))
+#define VC_MEM_SIZE (PAGE_SIZE + TX_BUFF_SIZE(CHAN_MAXLEDS))
 
-TXDATA_T *txdata;                       // Pointer to uncached Tx data buffer
-TXDATA_T tx_buffer[TX_BUFF_LEN(CHAN_MAXLEDS)];  // Tx buffer for assembling data
-uint8_t rgb_data[CHAN_MAXLEDS * LED_NCHANS * 3]; // RGB data
+TXDATA_T *txdata;                                    // Pointer to uncached Tx data buffer
+TXDATA_T tx_buffer[TX_BUFF_LEN(CHAN_MAXLEDS)];       // Tx buffer for assembling data
+uint8_t rgb_data[CHAN_MAXLEDS * LED_NCHANS * 3];     // RGB data
+int used_chan = LED_NCHANS, used_led = CHAN_MAXLEDS; // Actual led strings and size of strings being used. Set by command line arguements
 
 void mat_txdata(uint8_t *leds, TXDATA_T *txd);
 void swap_bytes(void *data, int len);
@@ -110,67 +116,69 @@ void start_smi(MEM_MAP *mp);
 
 int main(int argc, char *argv[])
 {
-//    char msg[5] = "OK\n ";
-//    int bytesread;
-/*    int args=0, n;
- 
-    while (argc > ++args)               // Process command-line args
+
+    int args = 0;
+
+    while (argc > ++args) // Process command-line args
     {
         if (argv[args][0] == '-')
         {
             switch (toupper(argv[args][1]))
             {
-            case 'N':                   // -N: number of LEDs per channel
-                if (args >= argc-1)
-                    fprintf(stderr, "Error: no numeric value\n");
+            case 'L': // -n: number of LEDs used per channel
+                if (args >= argc - 1)
+                    fprintf(stderr, "Error: no numeric leds value\n");
                 else
-                    chan_ledcount = atoi(argv[++args]);
+                {
+                    used_led = atoi(argv[++args]);
+                    if (used_led > CHAN_MAXLEDS)
+                        used_led = CHAN_MAXLEDS;
+                }
                 break;
-            case 'T':                   // -T: test mode
-                testmode = 1;
+            case 'C': // -c: number of channels used
+                if (args >= argc - 1)
+                    fprintf(stderr, "Error: no numeric channel value\n");
+                else
+                {
+                    used_chan = atoi(argv[++args]);
+                    if (used_chan > LED_NCHANS)
+                        used_chan = LED_NCHANS;
+                }
                 break;
-            default:                    // Otherwise error
+            default: // Otherwise error
                 printf("Unrecognised option '%c'\n", argv[args][1]);
                 printf("Options:\n"
-                       "  -n num    number of LEDs per channel\n"\
-                       "  -t        Test mode (flash LEDs)\n"\
-                      );
-                return(1);
+                       "  -l num    number of LEDs per channel\n"
+                       "  -c num    number of channels\n");
+                return (1);
             }
         }
-        else if (chan_num<LED_NCHANS && hexdig(argv[args][0])>=0 &&
-                 (n=str_rgb(argv[args], rgb_data, chan_num))>0)
-        {
-            chan_ledcount = n > chan_ledcount ? n : chan_ledcount;
-            chan_num++;
-        }
-    } */
+    }
+    printf("Using %i channels of %i LEDs\n", used_chan, used_led);
     signal(SIGINT, terminate);
     map_devices();
-    init_smi(LED_NCHANS>8 ? SMI_16_BITS : SMI_8_BITS, SMI_TIMING);
+    init_smi(LED_NCHANS > 8 ? SMI_16_BITS : SMI_8_BITS, SMI_TIMING);
     map_uncached_mem(&vc_mem, VC_MEM_SIZE);
     setup_smi_dma(&vc_mem, TX_BUFF_LEN(CHAN_MAXLEDS));
     while (1)
     {
-        while (fread(&rgb_data, 1, LED_NCHANS * CHAN_MAXLEDS * 3, stdin) == 0)
-		usleep(10);
+        while (fread(&rgb_data, 1, used_chan * used_led * 3, stdin) == 0)
+            usleep(10);
         mat_txdata(rgb_data, &tx_buffer[LED_TX_OSET(0)]);
-    #if LED_NCHANS <= 8
-        swap_bytes(tx_buffer, TX_BUFF_SIZE(CHAN_MAXLEDS));
-    #endif
-        memcpy(txdata, tx_buffer, TX_BUFF_SIZE(CHAN_MAXLEDS));
+#if LED_NCHANS <= 8
+        swap_bytes(tx_buffer, TX_BUFF_SIZE(used_led));
+#endif
+        memcpy(txdata, tx_buffer, TX_BUFF_SIZE(used_led));
         enable_dma(DMA_CHAN);
         start_smi(&vc_mem);
         usleep(10);
         while (dma_active(DMA_CHAN))
             usleep(10);
-	printf("OK\n");
-//        fwrite(&msg, 1, 3, stdout);
-//	printf("%i\n", bytesread);
+        printf("OK\n");
         fflush(stdout);
     }
     terminate(0);
-    return(0);
+    return (0);
 }
 
 // Set Tx data for 8 or 16 chans, 1 LED per chan, given 1 RGB val per chan
@@ -178,53 +186,55 @@ int main(int argc, char *argv[])
 void mat_txdata(uint8_t *leds, TXDATA_T *txd)
 {
     int i, n, l, o;
-    uint8_t by, bi,msk, cr,cg,cb;
+    uint8_t by, bi, msk, cr, cg, cb;
 
-    for (l=0; l<CHAN_MAXLEDS; l++)
-    {    
+    for (l = 0; l < used_led; l++)
+    {
         // For each bit of the 24-bit RGB values..
-        for (n=0; n<LED_NBITS; n++)
+        for (n = 0; n < LED_NBITS; n++)
         {
             // Mask to convert RGB to GRB, M.S bit first
-            msk = n==0 ? 0x80 : n==8 ? 0x80 : n==16 ? 0x80 : msk>>1;
+            msk = n == 0 ? 0x80 : n == 8 ? 0x80
+                              : n == 16  ? 0x80
+                                         : msk >> 1;
             // 1st byte or word is a high pulse on all lines
             txd[0] = (TXDATA_T)0xffff;
             // 2nd has high or low bits from data
             // 3rd is a low pulse
             txd[1] = txd[2] = 0;
-            for (i=0; i<LED_NCHANS; i++)
+            for (i = 0; i < LED_NCHANS; i++)
             {
-		if (i < LED_NCHANS)
-		{
-		        o = (i*CHAN_MAXLEDS + l)*3;
-		        cr = leds[o];
-		        cg = leds[o+1];
-		        cb = leds[o+2];
-		        bi = n/8;
-		        if (bi == 0)
-		        {
-		            by = cg;
-		        }
-		        else
-		        {
-		            if (bi == 1)
-		            {
-		                by = cr;
-		            }
-		            else
-		            {
-		                by = cb;
-		            }
-		        }
-		}
-		else
-		{
-			by = 0;
-		}
+                if (i < used_chan)
+                {
+                    o = (i * used_led + l) * 3;
+                    cr = leds[o];
+                    cg = leds[o + 1];
+                    cb = leds[o + 2];
+                    bi = n / 8;
+                    if (bi == 0)
+                    {
+                        by = cg;
+                    }
+                    else
+                    {
+                        if (bi == 1)
+                        {
+                            by = cr;
+                        }
+                        else
+                        {
+                            by = cb;
+                        }
+                    }
+                }
+                else
+                {
+                    by = 0;
+                }
                 if (by & msk)
                     txd[1] |= (1 << i);
             }
-	    // printf("LED %i Bit %i: %04x\n", l, n, txd[1]);
+            // printf("LED %i Bit %i: %04x\n", l, n, txd[1]);
             txd += BIT_NPULSES;
         }
     }
@@ -265,11 +275,11 @@ void terminate(int sig)
 {
     int i;
 
-//    printf("Closing\n");
+    printf("Closing\n");
     if (gpio_regs.virt)
     {
-        for (i=0; i<LED_NCHANS; i++)
-            gpio_mode(LED_D0_PIN+i, GPIO_IN);
+        for (i = 0; i < LED_NCHANS; i++)
+            gpio_mode(LED_D0_PIN + i, GPIO_IN);
     }
     if (smi_regs.virt)
         *REG32(smi_regs, SMI_CS) = 0;
@@ -287,10 +297,10 @@ void init_smi(int width, int ns, int setup, int strobe, int hold)
 {
     int i, divi = ns / 2;
 
-    smi_cs  = (SMI_CS_REG *) REG32(smi_regs, SMI_CS);
-    smi_l   = (SMI_L_REG *)  REG32(smi_regs, SMI_L);
-    smi_a   = (SMI_A_REG *)  REG32(smi_regs, SMI_A);
-    smi_d   = (SMI_D_REG *)  REG32(smi_regs, SMI_D);
+    smi_cs = (SMI_CS_REG *)REG32(smi_regs, SMI_CS);
+    smi_l = (SMI_L_REG *)REG32(smi_regs, SMI_L);
+    smi_a = (SMI_A_REG *)REG32(smi_regs, SMI_A);
+    smi_d = (SMI_D_REG *)REG32(smi_regs, SMI_D);
     smi_dmc = (SMI_DMC_REG *)REG32(smi_regs, SMI_DMC);
     smi_dsr = (SMI_DSR_REG *)REG32(smi_regs, SMI_DSR0);
     smi_dsw = (SMI_DSW_REG *)REG32(smi_regs, SMI_DSW0);
@@ -303,13 +313,15 @@ void init_smi(int width, int ns, int setup, int strobe, int hold)
     {
         *REG32(clk_regs, CLK_SMI_CTL) = CLK_PASSWD | (1 << 5);
         usleep(10);
-        while (*REG32(clk_regs, CLK_SMI_CTL) & (1 << 7)) ;
+        while (*REG32(clk_regs, CLK_SMI_CTL) & (1 << 7))
+            ;
         usleep(10);
         *REG32(clk_regs, CLK_SMI_DIV) = CLK_PASSWD | (divi << 12);
         usleep(10);
         *REG32(clk_regs, CLK_SMI_CTL) = CLK_PASSWD | 6 | (1 << 4);
         usleep(10);
-        while ((*REG32(clk_regs, CLK_SMI_CTL) & (1 << 7)) == 0) ;
+        while ((*REG32(clk_regs, CLK_SMI_CTL) & (1 << 7)) == 0)
+            ;
         usleep(100);
     }
     if (smi_cs->seterr)
@@ -320,16 +332,16 @@ void init_smi(int width, int ns, int setup, int strobe, int hold)
     smi_dmc->panicr = smi_dmc->panicw = 8;
     smi_dmc->reqr = smi_dmc->reqw = REQUEST_THRESH;
     smi_dsr->rwidth = smi_dsw->wwidth = width;
-    for (i=0; i<LED_NCHANS; i++)
-        gpio_mode(LED_D0_PIN+i, GPIO_ALT1);
+    for (i = 0; i < LED_NCHANS; i++)
+        gpio_mode(LED_D0_PIN + i, GPIO_ALT1);
 }
 
 // Set up SMI transfers using DMA
 void setup_smi_dma(MEM_MAP *mp, int nsamp)
 {
-    DMA_CB *cbs=mp->virt;
+    DMA_CB *cbs = mp->virt;
 
-    txdata = (TXDATA_T *)(cbs+1);
+    txdata = (TXDATA_T *)(cbs + 1);
     smi_dmc->dmaen = 1;
     smi_cs->enable = 1;
     smi_cs->clear = 1;
@@ -346,7 +358,7 @@ void setup_smi_dma(MEM_MAP *mp, int nsamp)
 // Start SMI DMA transfers
 void start_smi(MEM_MAP *mp)
 {
-    DMA_CB *cbs=mp->virt;
+    DMA_CB *cbs = mp->virt;
 
     start_dma(mp, DMA_CHAN, &cbs[0], 0);
     smi_cs->start = 1;
