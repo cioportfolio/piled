@@ -29,7 +29,7 @@ for it in range(0,10):
 
 		rgb[:,col] = np.array([15-col, it,col])
 		display(rgb)
-		time.sleep(.01)
+		time.sleep(.1) # At 100 fps can handle around 250 leds per channel
 
 proc.terminate()
 print(proc.wait())
