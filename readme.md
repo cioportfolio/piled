@@ -16,6 +16,8 @@ sudo python3 ./demo.py
 
 # User Guide #
 
+*Note:* When run with sudo python3 will have a different context e.g. different path for packages etc. Either set the PYTHONPATH appropriately or use ```sudo pip``` to install required packages
+
 ```python
 import piled # Import the led module
 import numpy # Optional but recommended for processing byte arrays
