@@ -1,8 +1,12 @@
 import subprocess
+import signal
 
 used_chan = 1
 used_led = 1
 proc = None
+
+def preexec_function():
+	signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 def start(channels, ledsperchannel):
 	global used_chan
@@ -17,7 +21,8 @@ def start(channels, ledsperchannel):
 		"-c", str(used_chan),
 		"-l", str(used_led)
 	],
-	stdin=subprocess.PIPE)
+	stdin=subprocess.PIPE,
+	preexec_fn = preexec_function)
 
 def display(rgb, debug = False):
 	message = str(proc.stdin.write(rgb))

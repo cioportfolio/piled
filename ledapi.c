@@ -155,7 +155,7 @@ int main(int argc, char *argv[])
         }
     }
     // printf("Using %i channels of %i LEDs\n", used_chan, used_led);
-    signal(SIGINT, terminate);
+    signal(SIGTERM, terminate);
     map_devices();
     init_smi(LED_NCHANS > 8 ? SMI_16_BITS : SMI_8_BITS, SMI_TIMING);
     map_uncached_mem(&vc_mem, VC_MEM_SIZE);
