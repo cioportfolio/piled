@@ -180,7 +180,7 @@ uint8_t gpio_in(int pin);
 void disp_mode_vals(uint32_t mode);
 int open_mbox(void);
 void close_mbox(int fd);
-uint32_t msg_mbox(int fd, VC_MSG *msgp);
+size_t msg_mbox(int fd, VC_MSG *msgp);
 void *map_segment(void *addr, int size);
 void unmap_segment(void *addr, int size);
 uint32_t alloc_vc_mem(int fd, uint32_t size, VC_ALLOC_FLAGS flags);
