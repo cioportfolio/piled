@@ -45,7 +45,7 @@ void *map_periph(MEM_MAP *mp, void *phys, int size)
 {
     mp->phys = phys;
     mp->size = PAGE_ROUNDUP(size);
-    mp->bus = (void *)((uint32_t)phys - PHYS_REG_BASE + BUS_REG_BASE);
+    mp->bus = (void *)((size_t)phys - PHYS_REG_BASE + BUS_REG_BASE);
     mp->virt = map_segment(phys, mp->size);
     return(mp->virt);
 }
@@ -154,7 +154,7 @@ void close_mbox(int fd)
 // Send message to mailbox, return first response int, 0 if error
 uint32_t msg_mbox(int fd, VC_MSG *msgp)
 {
-    uint32_t ret=0, i;
+    size_t ret=0, i;
 
     for (i=msgp->dlen/4; i<=msgp->blen/4; i+=4)
         msgp->uints[i++] = 0;
@@ -233,7 +233,7 @@ void *map_segment(void *addr, int size)
     size = PAGE_ROUNDUP(size);
     if ((fd = open ("/dev/mem", O_RDWR|O_SYNC|O_CLOEXEC)) < 0)
         fail("Error: can't open /dev/mem, run using sudo\n");
-    mem = mmap(0, size, PROT_WRITE|PROT_READ, MAP_SHARED, fd, (uint32_t)addr);
+    mem = mmap(0, size, PROT_WRITE|PROT_READ, MAP_SHARED, fd, (size_t)addr);
     close(fd);
 #if DEBUG
     printf("Map %p -> %p\n", (void *)addr, mem);
