@@ -152,7 +152,7 @@ void close_mbox(int fd)
 }
 
 // Send message to mailbox, return first response int, 0 if error
-uint32_t msg_mbox(int fd, VC_MSG *msgp)
+size_t msg_mbox(int fd, VC_MSG *msgp)
 {
     size_t ret=0, i;
 
