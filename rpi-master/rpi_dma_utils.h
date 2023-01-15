@@ -49,14 +49,14 @@ typedef struct {
 } MEM_MAP;
 
 // Get virtual 8 and 32-bit pointers to register
-#define REG8(m, x)  ((volatile uint8_t *) ((uint32_t)(m.virt)+(uint32_t)(x)))
-#define REG32(m, x) ((volatile uint32_t *)((uint32_t)(m.virt)+(uint32_t)(x)))
+#define REG8(m, x)  ((volatile uint8_t *) ((size_t)(m.virt)+(size_t)(x)))
+#define REG32(m, x) ((volatile uint32_t *)((size_t)(m.virt)+(size_t)(x)))
 // Get bus address of register
-#define REG_BUS_ADDR(m, x)  ((uint32_t)(m.bus)  + (uint32_t)(x))
+#define REG_BUS_ADDR(m, x)  ((size_t)(m.bus)  + (size_t)(x))
 // Convert uncached memory virtual address to bus address
-#define MEM_BUS_ADDR(mp, a) ((uint32_t)a-(uint32_t)mp->virt+(uint32_t)mp->bus)
+#define MEM_BUS_ADDR(mp, a) ((size_t)a-(size_t)mp->virt+(size_t)mp->bus)
 // Convert bus address to physical address (for mmap)
-#define BUS_PHYS_ADDR(a)    ((void *)((uint32_t)(a)&~0xC0000000))
+#define BUS_PHYS_ADDR(a)    ((void *)((size_t)(a)&~0xC0000000))
 
 // GPIO register definitions
 #define GPIO_BASE       (PHYS_REG_BASE + 0x200000)
