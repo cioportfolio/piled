@@ -45,3 +45,13 @@ piled.stop(debug = False) # Gracefully sutdown low level subprocess and optional
 This code uses a special hardware interface that works on specific pins (SD0 to SD15) as shown in this diagram
 
 ![SD Pins](https://iosoftblog.files.wordpress.com/2020/07/rpi_smi_pinout.png)
+
+## Known issues
+
+The hardware interface used by this code shares a interrupt that is also used by the Raspberry Pi HDMI hardware. The LEDs can show occasional errors unless the HDMI is disabled.
+
+Use rpi-config to switch to the legacy graphics driver and then use:
+
+```bash
+tvservice -off
+```
